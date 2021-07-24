@@ -98,7 +98,7 @@ const (
 )
 
 var pieces = []Piece{
-	{"blue", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 1}}},
+	{"blue", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}}},
 	{"green", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 1}}},
 	{"lightblue", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}, {2, 0}}},
 	{"maroon", []Pos{{0, 0}, {0, 1}, {1, 1}, {1, 2}}},
@@ -108,7 +108,7 @@ var pieces = []Piece{
 	{"pink", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 2}, {1, 3}}},
 	{"red", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 0}}},
 	{"turquoise", []Pos{{0, 0}, {0, 1}, {1, 0}}},
-	{"violet", []Pos{{0, 0}, {1, 0}, {1, 1}, {2, 1}, {2, 1}}},
+	{"violet", []Pos{{0, 0}, {1, 0}, {1, 1}, {2, 1}, {2, 2}}},
 	{"yellow", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 1}}},
 }
 
@@ -120,30 +120,25 @@ type Game struct {
 }
 
 func (g *Game) add(piece Piece, transform int, pos Pos) (bool, error) {
-	if transform < 0 || transform >= len(tx) {
-		return false, fmt.Errorf("invalid transform: %d", transform)
-	}
 	if g.count+len(piece.pos) > DimX*DimY {
 		return false, fmt.Errorf("board is already full")
 	}
-	var (
-		move  = Move{piece, transform, pos}
-		image = move.image()
-	)
-	for _, p := range image {
-		if p[0] < 0 || p[0] >= len(g.cells) || p[1] < 0 || p[1] >= len(g.cells[p[0]]) {
+	var image [5]Pos
+	for i, p := range piece.pos {
+		var pi = tx[transform].Transform(p).translate(pos)
+		if pi[0] < 0 || pi[0] >= len(g.cells) || pi[1] < 0 || pi[1] >= len(g.cells[pi[0]]) {
 			return false, nil
 		}
-		if len(g.cells[p[0]][p[1]]) > 0 {
+		if len(g.cells[pi[0]][pi[1]]) > 0 {
 			return false, nil
 		}
+		image[i] = pi
 	}
-	g.moves = append(g.moves, move)
-	g.count += len(image)
-	for _, pi := range image {
-		g.cells[pi[0]][pi[1]] = piece.name
+	g.moves = append(g.moves, Move{piece, transform, pos})
+	g.count += len(piece.pos)
+	for i := range piece.pos {
+		g.cells[image[i][0]][image[i][1]] = piece.name
 	}
-	fmt.Println("added", move)
 	return true, nil
 }
 
@@ -158,7 +153,6 @@ func (g *Game) pop() error {
 		g.cells[pi[0]][pi[1]] = ""
 	}
 	g.moves = g.moves[:len(g.moves)-1]
-	fmt.Println("popped", m)
 	return nil
 }
 
@@ -251,30 +245,21 @@ func (g *Game) solve(ps []Piece) (bool, error) {
 		}
 		return true, nil
 	}
-	var pos []Pos
 	for x := 0; x < DimX; x++ {
 		for y := 0; y < DimY; y++ {
-			if len(g.cells[x][y]) == 0 {
-				pos = append(pos, Pos{x, y})
-			}
-		}
-	}
-	if len(ps) == 1 && ps[0].name == "mint" {
-		fmt.Println(pos)
-	}
-	for _, p := range pos {
-		for transform := range tx {
-			ok, err := g.add(ps[len(ps)-1], transform, p)
-			if err != nil {
-				return false, err
-			}
-			if ok {
-				ok2, err := g.solve(ps[:len(ps)-1])
-				if ok2 || err != nil {
-					return ok2, err
-				}
-				if err := g.pop(); err != nil {
+			for transform := range tx {
+				ok, err := g.add(ps[len(ps)-1], transform, Pos{x, y})
+				if err != nil {
 					return false, err
+				}
+				if ok {
+					ok2, err := g.solve(ps[:len(ps)-1])
+					if ok2 || err != nil {
+						return ok2, err
+					}
+					if err := g.pop(); err != nil {
+						return false, err
+					}
 				}
 			}
 		}
