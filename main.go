@@ -55,7 +55,7 @@ var Rot90 = Matrix{
 
 // Mirror mirrors a piece on its x axis
 var Mirror = Matrix{
-	{-1, 0},
+	{1, 0},
 	{0, -1},
 }
 
@@ -78,8 +78,22 @@ type Move struct {
 	Translate Pos
 }
 
+func (m Move) String() string {
+	return fmt.Sprintf("%s at position (%v) with transformation %d, %v", m.Piece.name, m.Translate, m.Transform, m.image())
+}
+
+func (m Move) image() []Pos {
+	var res []Pos
+	for _, p := range m.Piece.pos {
+		res = append(res, tx[m.Transform].Transform(p).translate(m.Translate))
+	}
+	return res
+}
+
 const (
+	// DimX is the height of the playing board.
 	DimX = 5
+	// DimY is the width of the playing board.
 	DimY = 11
 )
 
@@ -92,7 +106,7 @@ var pieces = []Piece{
 	{"olive", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 2}}},
 	{"orange", []Pos{{0, 0}, {1, 0}, {1, 1}, {1, 2}, {2, 1}}},
 	{"pink", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 2}, {1, 3}}},
-	{"red", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 1}}},
+	{"red", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 0}}},
 	{"turquoise", []Pos{{0, 0}, {0, 1}, {1, 0}}},
 	{"violet", []Pos{{0, 0}, {1, 0}, {1, 1}, {2, 1}, {2, 1}}},
 	{"yellow", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 1}}},
@@ -101,7 +115,7 @@ var pieces = []Piece{
 // Game is a sequence of moves.
 type Game struct {
 	moves []Move
-	cells [5][11]string
+	cells [DimX][DimY]string
 	count int
 }
 
@@ -112,22 +126,24 @@ func (g *Game) add(piece Piece, transform int, pos Pos) (bool, error) {
 	if g.count+len(piece.pos) > DimX*DimY {
 		return false, fmt.Errorf("board is already full")
 	}
-	var image []Pos
-	for _, p := range piece.pos {
-		var pi = tx[transform].Transform(p).translate(pos)
-		if pi[0] < 0 || pi[0] >= len(g.cells) || pi[1] < 0 || pi[1] >= len(g.cells[pi[0]]) {
+	var (
+		move  = Move{piece, transform, pos}
+		image = move.image()
+	)
+	for _, p := range image {
+		if p[0] < 0 || p[0] >= len(g.cells) || p[1] < 0 || p[1] >= len(g.cells[p[0]]) {
 			return false, nil
 		}
-		if len(g.cells[pi[0]][pi[1]]) > 0 {
+		if len(g.cells[p[0]][p[1]]) > 0 {
 			return false, nil
 		}
-		image = append(image, pi)
 	}
-	g.moves = append(g.moves, Move{piece, transform, pos})
+	g.moves = append(g.moves, move)
 	g.count += len(image)
 	for _, pi := range image {
 		g.cells[pi[0]][pi[1]] = piece.name
 	}
+	fmt.Println("added", move)
 	return true, nil
 }
 
@@ -138,10 +154,11 @@ func (g *Game) pop() error {
 	var m = g.moves[len(g.moves)-1]
 	g.count -= len(m.Piece.pos)
 	for _, p := range m.Piece.pos {
-		var pi = tx[m.Transform].Transform(p)
+		var pi = tx[m.Transform].Transform(p).translate(m.Translate)
 		g.cells[pi[0]][pi[1]] = ""
 	}
 	g.moves = g.moves[:len(g.moves)-1]
+	fmt.Println("popped", m)
 	return nil
 }
 
@@ -220,16 +237,19 @@ func main() {
 	}
 	if ok {
 		fmt.Println("Found solution")
-		fmt.Println(g.cells)
 	} else {
 		fmt.Println("No solution found")
 	}
+	fmt.Println(g.cells)
 	os.Exit(0)
 }
 
 func (g *Game) solve(ps []Piece) (bool, error) {
 	if len(ps) == 0 {
-		return g.count == DimX*DimY, nil
+		if g.count != DimX*DimY {
+			return false, fmt.Errorf("no pieces left, but board is not full")
+		}
+		return true, nil
 	}
 	var pos []Pos
 	for x := 0; x < DimX; x++ {
@@ -239,6 +259,9 @@ func (g *Game) solve(ps []Piece) (bool, error) {
 			}
 		}
 	}
+	if len(ps) == 1 && ps[0].name == "mint" {
+		fmt.Println(pos)
+	}
 	for _, p := range pos {
 		for transform := range tx {
 			ok, err := g.add(ps[len(ps)-1], transform, p)
@@ -246,9 +269,12 @@ func (g *Game) solve(ps []Piece) (bool, error) {
 				return false, err
 			}
 			if ok {
-				ok, err := g.solve(ps[:len(ps)-1])
-				if ok || err != nil {
-					return ok, err
+				ok2, err := g.solve(ps[:len(ps)-1])
+				if ok2 || err != nil {
+					return ok2, err
+				}
+				if err := g.pop(); err != nil {
+					return false, err
 				}
 			}
 		}
