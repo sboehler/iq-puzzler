@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
+	"sync"
 )
 
 // Pos describes a position. We use coordinates starting at the top-left origin, with
@@ -128,12 +129,11 @@ type Game struct {
 	count int
 }
 
-var image [5]Pos
-
 func (g *Game) add(piece Piece, pos Pos) (bool, error) {
 	if g.count+len(piece.pos) > DimX*DimY {
 		return false, fmt.Errorf("board is already full")
 	}
+	var image [5]Pos
 	for i, p := range piece.pos {
 		var pi = p.translate(pos)
 		if pi[0] < 0 || pi[0] >= DimX || pi[1] < 0 || pi[1] >= DimY {
@@ -244,17 +244,10 @@ func main() {
 		os.Exit(1)
 	}
 	cache := precompute(ps)
-	ok, err := g.solve(cache)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	res := g.solveP(cache)
+	for r := range res {
+		fmt.Println("Solution found", r)
 	}
-	if ok {
-		fmt.Println("Found solution")
-	} else {
-		fmt.Println("No solution found")
-	}
-	fmt.Println(g.moves)
 }
 
 func precompute(ps []Piece) [][8]Piece {
@@ -266,6 +259,52 @@ func precompute(ps []Piece) [][8]Piece {
 		}
 		res = append(res, transformed)
 	}
+	return res
+}
+
+func (g Game) solveP(ps [][8]Piece) <-chan []Move {
+	if len(ps) == 0 {
+		return nil
+	}
+	var res = make(chan []Move)
+
+	var wg sync.WaitGroup
+	for x := 0; x < DimX; x++ {
+		for y := 0; y < DimY; y++ {
+			for _, piece := range ps[len(ps)-1] {
+				piece := piece
+				x := x
+				y := y
+				g2 := &Game{
+					cells: g.cells,
+					count: g.count,
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					ok, err := g2.add(piece, Pos{x, y})
+					if err != nil {
+						panic(err)
+					}
+					if !ok {
+						return
+					}
+					ok2, err := g2.solve(ps[:len(ps)-1])
+					if err != nil {
+						panic(err)
+					}
+					if ok2 {
+						res <- g2.moves
+					}
+				}()
+			}
+		}
+	}
+	go func() {
+		wg.Wait()
+		fmt.Println("all done")
+		close(res)
+	}()
 	return res
 }
 
@@ -283,14 +322,15 @@ func (g *Game) solve(ps [][8]Piece) (bool, error) {
 				if err != nil {
 					return false, err
 				}
-				if ok {
-					ok2, err := g.solve(ps[:len(ps)-1])
-					if ok2 || err != nil {
-						return ok2, err
-					}
-					if err := g.pop(); err != nil {
-						return false, err
-					}
+				if !ok {
+					continue
+				}
+				ok2, err := g.solve(ps[:len(ps)-1])
+				if ok2 || err != nil {
+					return ok2, err
+				}
+				if err := g.pop(); err != nil {
+					return false, err
 				}
 			}
 		}
