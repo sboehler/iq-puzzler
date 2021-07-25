@@ -289,12 +289,8 @@ func (g Game) solveP(ps [][8]Piece) <-chan []Move {
 					if !ok {
 						return
 					}
-					ok2, err := g2.solve(ps[:len(ps)-1])
-					if err != nil {
+					if err := g2.solve(ps[:len(ps)-1], res); err != nil {
 						panic(err)
-					}
-					if ok2 {
-						res <- g2.moves
 					}
 				}()
 			}
@@ -308,32 +304,34 @@ func (g Game) solveP(ps [][8]Piece) <-chan []Move {
 	return res
 }
 
-func (g *Game) solve(ps [][8]Piece) (bool, error) {
+func (g *Game) solve(ps [][8]Piece, ch chan<- []Move) error {
 	if len(ps) == 0 {
 		if g.count != DimX*DimY {
-			return false, fmt.Errorf("no pieces left, but board is not full")
+			return fmt.Errorf("no pieces left, but board is not full")
 		}
-		return true, nil
+		var res = make([]Move, len(g.moves))
+		copy(res, g.moves)
+		ch <- res
+		return nil
 	}
 	for x := 0; x < DimX; x++ {
 		for y := 0; y < DimY; y++ {
 			for _, piece := range ps[len(ps)-1] {
 				ok, err := g.add(piece, Pos{x, y})
 				if err != nil {
-					return false, err
+					return err
 				}
 				if !ok {
 					continue
 				}
-				ok2, err := g.solve(ps[:len(ps)-1])
-				if ok2 || err != nil {
-					return ok2, err
+				if err := g.solve(ps[:len(ps)-1], ch); err != nil {
+					return err
 				}
 				if err := g.pop(); err != nil {
-					return false, err
+					return err
 				}
 			}
 		}
 	}
-	return false, nil
+	return nil
 }
