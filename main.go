@@ -4,7 +4,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"runtime/pprof"
 	"strings"
 )
 
@@ -20,6 +22,14 @@ func (p Pos) translate(p2 Pos) Pos {
 type Piece struct {
 	name string
 	pos  []Pos
+}
+
+func (p Piece) transform(m Matrix) Piece {
+	var posi = make([]Pos, 0, len(p.pos))
+	for _, pos := range p.pos {
+		posi = append(posi, m.Transform(pos))
+	}
+	return Piece{p.name, posi}
 }
 
 // Matrix represents a 2D transformation.
@@ -74,18 +84,17 @@ var tx = []Matrix{
 // Move descries the position of a piece on the board.
 type Move struct {
 	Piece     Piece
-	Transform int
 	Translate Pos
 }
 
 func (m Move) String() string {
-	return fmt.Sprintf("%s at position (%v) with transformation %d, %v", m.Piece.name, m.Translate, m.Transform, m.image())
+	return fmt.Sprintf("%s at position (%v): %v", m.Piece.name, m.Translate, m.image())
 }
 
 func (m Move) image() []Pos {
 	var res []Pos
 	for _, p := range m.Piece.pos {
-		res = append(res, tx[m.Transform].Transform(p).translate(m.Translate))
+		res = append(res, p.translate(m.Translate))
 	}
 	return res
 }
@@ -115,29 +124,30 @@ var pieces = []Piece{
 // Game is a sequence of moves.
 type Game struct {
 	moves []Move
-	cells [DimX][DimY]string
+	cells [DimX][DimY]bool
 	count int
 }
 
-func (g *Game) add(piece Piece, transform int, pos Pos) (bool, error) {
+var image [5]Pos
+
+func (g *Game) add(piece Piece, pos Pos) (bool, error) {
 	if g.count+len(piece.pos) > DimX*DimY {
 		return false, fmt.Errorf("board is already full")
 	}
-	var image [5]Pos
 	for i, p := range piece.pos {
-		var pi = tx[transform].Transform(p).translate(pos)
-		if pi[0] < 0 || pi[0] >= len(g.cells) || pi[1] < 0 || pi[1] >= len(g.cells[pi[0]]) {
+		var pi = p.translate(pos)
+		if pi[0] < 0 || pi[0] >= DimX || pi[1] < 0 || pi[1] >= DimY {
 			return false, nil
 		}
-		if len(g.cells[pi[0]][pi[1]]) > 0 {
+		if g.cells[pi[0]][pi[1]] {
 			return false, nil
 		}
 		image[i] = pi
 	}
-	g.moves = append(g.moves, Move{piece, transform, pos})
+	g.moves = append(g.moves, Move{piece, pos})
 	g.count += len(piece.pos)
 	for i := range piece.pos {
-		g.cells[image[i][0]][image[i][1]] = piece.name
+		g.cells[image[i][0]][image[i][1]] = true
 	}
 	return true, nil
 }
@@ -149,16 +159,17 @@ func (g *Game) pop() error {
 	var m = g.moves[len(g.moves)-1]
 	g.count -= len(m.Piece.pos)
 	for _, p := range m.Piece.pos {
-		var pi = tx[m.Transform].Transform(p).translate(m.Translate)
-		g.cells[pi[0]][pi[1]] = ""
+		var pi = p.translate(m.Translate)
+		g.cells[pi[0]][pi[1]] = false
 	}
 	g.moves = g.moves[:len(g.moves)-1]
 	return nil
 }
 
 var (
-	board     = flag.String("board", "xxxxxxxxxxx,xxxxxxxxxxx,xxxxxxxxxxx,xxxxxxxxxxx,xxxxxxxxxxx", "The board (0 for empty, x for occupied)")
-	available = flag.String("pieces", "", "the available pieces")
+	board      = flag.String("board", "xxxxxxxxxxx,xxxxxxxxxxx,xxxxxxxxxxx,xxxxxxxxxxx,xxxxxxxxxxx", "The board (0 for empty, x for occupied)")
+	available  = flag.String("pieces", "", "the available pieces")
+	cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 )
 
 func parseBoard(b string) (*Game, error) {
@@ -173,7 +184,7 @@ func parseBoard(b string) (*Game, error) {
 		}
 		for y, c := range row {
 			if c == 'x' {
-				res.cells[x][y] = "x"
+				res.cells[x][y] = true
 				res.count++
 			}
 		}
@@ -214,6 +225,14 @@ func main() {
 		err error
 	)
 	flag.Parse()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 	g, err = parseBoard(*board)
 	if err != nil {
 		fmt.Println(err)
@@ -224,7 +243,8 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	ok, err := g.solve(ps)
+	cache := precompute(ps)
+	ok, err := g.solve(cache)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -234,11 +254,22 @@ func main() {
 	} else {
 		fmt.Println("No solution found")
 	}
-	fmt.Println(g.cells)
-	os.Exit(0)
+	fmt.Println(g.moves)
 }
 
-func (g *Game) solve(ps []Piece) (bool, error) {
+func precompute(ps []Piece) [][8]Piece {
+	var res [][8]Piece
+	for _, piece := range ps {
+		var transformed [8]Piece
+		for t := range transformed {
+			transformed[t] = piece.transform(tx[t])
+		}
+		res = append(res, transformed)
+	}
+	return res
+}
+
+func (g *Game) solve(ps [][8]Piece) (bool, error) {
 	if len(ps) == 0 {
 		if g.count != DimX*DimY {
 			return false, fmt.Errorf("no pieces left, but board is not full")
@@ -247,8 +278,8 @@ func (g *Game) solve(ps []Piece) (bool, error) {
 	}
 	for x := 0; x < DimX; x++ {
 		for y := 0; y < DimY; y++ {
-			for transform := range tx {
-				ok, err := g.add(ps[len(ps)-1], transform, Pos{x, y})
+			for _, piece := range ps[len(ps)-1] {
+				ok, err := g.add(piece, Pos{x, y})
 				if err != nil {
 					return false, err
 				}
