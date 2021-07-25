@@ -23,6 +23,7 @@ func (p Pos) translate(p2 Pos) Pos {
 type Piece struct {
 	name string
 	pos  []Pos
+	sym  bool
 }
 
 func (p Piece) transform(m Matrix) Piece {
@@ -30,7 +31,18 @@ func (p Piece) transform(m Matrix) Piece {
 	for _, pos := range p.pos {
 		posi = append(posi, m.Transform(pos))
 	}
-	return Piece{p.name, posi}
+	return Piece{p.name, posi, p.sym}
+}
+
+func (p Piece) allVersions() []Piece {
+	var res []Piece
+	for t := range tx {
+		if p.sym && t >= 4 {
+			return res
+		}
+		res = append(res, p.transform(tx[t]))
+	}
+	return res
 }
 
 // Matrix represents a 2D transformation.
@@ -60,8 +72,8 @@ var Identity = Matrix{
 
 // Rot90 is a Rotation by 90 degrees.
 var Rot90 = Matrix{
-	{0, -1},
-	{1, 0},
+	{0, 1},
+	{-1, 0},
 }
 
 // Mirror mirrors a piece on its x axis
@@ -73,11 +85,11 @@ var Mirror = Matrix{
 // tx contains all possible transformations.
 var tx = []Matrix{
 	Identity,
+	Mirror,
 	Rot90,
+	Rot90.Mult(Mirror),
 	Rot90.Mult(Rot90),
 	Rot90.Mult(Rot90).Mult(Rot90),
-	Mirror,
-	Rot90.Mult(Mirror),
 	Rot90.Mult(Rot90).Mult(Mirror),
 	Rot90.Mult(Rot90).Mult(Rot90).Mult(Mirror),
 }
@@ -108,18 +120,18 @@ const (
 )
 
 var pieces = []Piece{
-	{"blue", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}}},
-	{"green", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 1}}},
-	{"lightblue", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}, {2, 0}}},
-	{"maroon", []Pos{{0, 0}, {0, 1}, {1, 1}, {1, 2}}},
-	{"mint", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 1}}},
-	{"olive", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 2}}},
-	{"orange", []Pos{{0, 0}, {1, 0}, {1, 1}, {1, 2}, {2, 1}}},
-	{"pink", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 2}, {1, 3}}},
-	{"red", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 0}}},
-	{"turquoise", []Pos{{0, 0}, {0, 1}, {1, 0}}},
-	{"violet", []Pos{{0, 0}, {1, 0}, {1, 1}, {2, 1}, {2, 2}}},
-	{"yellow", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 1}}},
+	{"blue", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}}, false},
+	{"green", []Pos{{0, 0}, {1, 0}, {2, 0}, {1, 1}}, true},
+	{"lightblue", []Pos{{0, 0}, {1, 0}, {2, 0}, {2, 1}, {2, 2}}, true},
+	{"maroon", []Pos{{0, 0}, {0, 1}, {1, 1}, {1, 2}}, true},
+	{"mint", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 1}}, false},
+	{"olive", []Pos{{0, 0}, {1, 0}, {2, 0}, {0, 1}, {2, 1}}, true},
+	{"orange", []Pos{{0, 0}, {1, 0}, {1, 1}, {1, 2}, {2, 1}}, false},
+	{"pink", []Pos{{0, 0}, {0, 1}, {0, 2}, {1, 2}, {1, 3}}, false},
+	{"red", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 0}}, false},
+	{"turquoise", []Pos{{0, 0}, {0, 1}, {1, 0}}, false},
+	{"violet", []Pos{{0, 0}, {1, 0}, {1, 1}, {2, 1}, {2, 2}}, true},
+	{"yellow", []Pos{{0, 0}, {0, 1}, {0, 2}, {0, 3}, {1, 1}}, false},
 }
 
 // Game is a sequence of moves.
@@ -250,19 +262,15 @@ func main() {
 	}
 }
 
-func precompute(ps []Piece) [][8]Piece {
-	var res [][8]Piece
+func precompute(ps []Piece) [][]Piece {
+	var res [][]Piece
 	for _, piece := range ps {
-		var transformed [8]Piece
-		for t := range transformed {
-			transformed[t] = piece.transform(tx[t])
-		}
-		res = append(res, transformed)
+		res = append(res, piece.allVersions())
 	}
 	return res
 }
 
-func (g Game) solveP(ps [][8]Piece) <-chan []Move {
+func (g Game) solveP(ps [][]Piece) <-chan []Move {
 	if len(ps) == 0 {
 		return nil
 	}
@@ -304,7 +312,7 @@ func (g Game) solveP(ps [][8]Piece) <-chan []Move {
 	return res
 }
 
-func (g *Game) solve(ps [][8]Piece, ch chan<- []Move) error {
+func (g *Game) solve(ps [][]Piece, ch chan<- []Move) error {
 	if len(ps) == 0 {
 		if g.count != DimX*DimY {
 			return fmt.Errorf("no pieces left, but board is not full")
